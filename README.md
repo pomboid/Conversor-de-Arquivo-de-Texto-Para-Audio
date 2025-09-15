@@ -22,7 +22,7 @@ Este projeto converte arquivos de texto (📄 **PDF**, 📝 **TXT** e 📘 **DOC
 
 1. Clonar o repositório
 bash
-git clone https://github.com/seu-usuario/seu-repositorio.git
+git clone https://github.com/pomboid/Conversor-de-Arquivo-de-Texto-Para-Audio
 cd seu-repositorio
 python -m venv venv
 venv\Scripts\activate
