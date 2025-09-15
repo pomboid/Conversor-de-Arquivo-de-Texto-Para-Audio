@@ -4,7 +4,9 @@ Este projeto converte arquivos de texto (📄 **PDF**, 📝 **TXT** e 📘 **DOC
 
 👉 Ele possui **duas versões**:
 1. **Versão Terminal (CLI)** – executada pelo prompt/terminal (`main.py`).  
-2. **Versão com Interface Gráfica (GUI)** – utilizando **Tkinter** (`mainGrafica.py`).  
+2. **Versão com Interface Gráfica (GUI)** – utilizando **Tkinter** (`mainGrafica.py`).
+
+3. OBS: A barra de progresso pode ficar travada no fim, porém é só esperar, quanto maior o arquivo mais tempo leva para converter
 
 ---
 
