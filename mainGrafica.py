@@ -3,6 +3,7 @@ import tempfile
 import asyncio
 import threading
 import time
+import re
 import tkinter as tk
 from tkinter import filedialog, ttk, messagebox
 import fitz  # PyMuPDF
@@ -28,7 +29,7 @@ def extract_text(filepath):
             text += para.text + "\n"
     else:
         raise ValueError("Tipo de arquivo não suportado. Use PDF, TXT ou DOCX.")
-    return text
+    return text.strip()
 
 # === Funções de TTS ===
 async def list_voices():
@@ -37,43 +38,59 @@ async def list_voices():
     return ptb_voices
 
 async def preview_voice(voice_name):
-    preview_text = "Olá, esta é uma prévia da voz."
-    if voice_name in ["pt-BR-Marcerio:DragonHDLatestNeural", "pt-BR-Thalita:DragonHDLatestNeural"]:
-        preview_text = (
-            "Olá! Esta é uma prévia da voz selecionada. "
-            "Este texto é um pouco maior para garantir que o áudio seja gerado corretamente."
-        )
+    text = "Olá, esta é uma prévia da voz."
+    await generate_audio_single(text, voice_name, None, speed=1.0, play_preview=True)
+
+async def generate_audio_single(text, voice_name, output_path, speed=1.4, play_preview=False):
+    """
+    Gera áudio de um bloco de texto.
+    Se play_preview=True, apenas reproduz o áudio sem salvar.
+    """
+    tmp_mp3 = tempfile.mktemp(suffix=".mp3")
     try:
-        tmp_mp3 = tempfile.mktemp(suffix=".mp3")
-        communicate = edge_tts.Communicate(preview_text, voice_name)
+        communicate = edge_tts.Communicate(text, voice_name)
         await communicate.save(tmp_mp3)
-
-        pygame.mixer.init()
-        pygame.mixer.music.load(tmp_mp3)
-        pygame.mixer.music.play()
-
-        while pygame.mixer.music.get_busy():
-            await asyncio.sleep(0.1)
-
-        pygame.mixer.quit()
-        os.remove(tmp_mp3)
-    except edge_tts.exceptions.NoAudioReceived:
-        messagebox.showerror("Erro", f"Não foi possível gerar áudio para a voz '{voice_name}'.")
+        sound = AudioSegment.from_file(tmp_mp3)
+        sound = sound._spawn(sound.raw_data, overrides={"frame_rate": int(sound.frame_rate * speed)})
+        sound = sound.set_frame_rate(sound.frame_rate)
+        if play_preview:
+            pygame.mixer.init()
+            pygame.mixer.music.load(tmp_mp3)
+            pygame.mixer.music.play()
+            while pygame.mixer.music.get_busy():
+                await asyncio.sleep(0.1)
+            pygame.mixer.quit()
+        elif output_path:
+            sound.export(output_path, format="mp3")
+    finally:
+        if os.path.exists(tmp_mp3):
+            os.remove(tmp_mp3)
 
 async def generate_audio(text, voice_name, output_path, speed=1.4):
-    tmp_mp3 = tempfile.mktemp(suffix=".mp3")
-    communicate = edge_tts.Communicate(text, voice_name)
-    await communicate.save(tmp_mp3)
+    """
+    Divide o texto em frases e gera áudio concatenado, respeitando pausas naturais.
+    """
+    # Remove quebras de linha extras
+    text = text.replace("\n", " ").strip()
+    # Divide em frases por pontuação
+    phrases = re.split(r'([.!?])', text)
+    phrases = [phrases[i]+phrases[i+1] for i in range(0, len(phrases)-1, 2)]
+    
+    combined = AudioSegment.silent(duration=0)
+    for phrase in phrases:
+        clean_phrase = phrase.strip()
+        if not clean_phrase:
+            continue
+        tmp_file = tempfile.mktemp(suffix=".mp3")
+        await generate_audio_single(clean_phrase, voice_name, tmp_file, speed)
+        segment = AudioSegment.from_file(tmp_file)
+        combined += segment + AudioSegment.silent(duration=150)  # pausa entre frases
+        os.remove(tmp_file)
 
-    sound = AudioSegment.from_file(tmp_mp3)
-    faster_sound = sound._spawn(sound.raw_data, overrides={"frame_rate": int(sound.frame_rate * speed)})
-    faster_sound = faster_sound.set_frame_rate(sound.frame_rate)
-    faster_sound.export(output_path, format="mp3")
-    os.remove(tmp_mp3)
+    combined.export(output_path, format="mp3")
 
 # === Dividir por Capítulos ===
 def split_by_chapters(text):
-    import re
     chapters = re.split(r'(Cap[ií]tulo .*?\n)', text)
     result = []
     if len(chapters) == 1:
@@ -119,22 +136,15 @@ class TextToAudioGUI:
         self.voice_canvas.configure(yscrollcommand=self.voice_scroll.set)
         self.voice_canvas.pack(side="left", fill="both", expand=True)
         self.voice_scroll.pack(side="right", fill="y")
-
-        # Scroll do mouse mais suave
-        def _on_mousewheel(event):
-            self.voice_canvas.yview_scroll(int(-1*(event.delta/120)), "units")
-        self.voice_canvas.bind("<Enter>", lambda e: self.voice_canvas.bind_all("<MouseWheel>", _on_mousewheel))
+        self.voice_canvas.bind("<Enter>", lambda e: self.voice_canvas.bind_all("<MouseWheel>", lambda ev: self.voice_canvas.yview_scroll(int(-1*(ev.delta/120)), "units")))
         self.voice_canvas.bind("<Leave>", lambda e: self.voice_canvas.unbind_all("<MouseWheel>"))
 
         # Velocidade
         tk.Label(root, text="Velocidade:").pack(anchor="w", padx=10)
         self.speed_var = tk.StringVar(value="1.4")
-        self.speed_dropdown = ttk.Combobox(
-            root,
-            textvariable=self.speed_var,
-            values=[str(round(x*0.1,1)) for x in range(10,21)],
-            state="readonly"
-        )
+        self.speed_dropdown = ttk.Combobox(root, textvariable=self.speed_var,
+                                           values=[str(round(x*0.1,1)) for x in range(10,21)],
+                                           state="readonly")
         self.speed_dropdown.pack(fill="x", padx=10)
 
         # Dividir capítulos
@@ -149,14 +159,11 @@ class TextToAudioGUI:
         self.progress = ttk.Progressbar(root, orient="horizontal", length=640, mode="determinate")
         self.progress.pack(pady=10, padx=10)
 
-        # Inicializar vozes
         self.root.after(100, self.load_voices)
 
     def select_file(self):
-        filepath = filedialog.askopenfilename(
-            title="Selecione o arquivo",
-            filetypes=[("Arquivos de texto","*.pdf *.txt *.docx"), ("Todos","*.*")]
-        )
+        filepath = filedialog.askopenfilename(title="Selecione o arquivo",
+                                              filetypes=[("Arquivos de texto","*.pdf *.txt *.docx"), ("Todos","*.*")])
         if filepath:
             self.file_entry.delete(0, tk.END)
             self.file_entry.insert(0, filepath)
@@ -177,16 +184,11 @@ class TextToAudioGUI:
                     frame.pack(fill="x", pady=2, padx=2)
                     lbl = tk.Label(frame, text=f"{v.get('ShortName','')} ({v.get('VoiceType','')})", anchor="w")
                     lbl.pack(side="left", padx=5, fill="x", expand=True)
-                    tk.Button(
-                        frame, text="▶️",
-                        command=lambda voice=v: threading.Thread(
-                            target=lambda: asyncio.run(preview_voice(voice["ShortName"])), daemon=True
-                        ).start()
-                    ).pack(side="left", padx=5)
+                    tk.Button(frame, text="▶️", command=lambda voice=v: threading.Thread(
+                        target=lambda: asyncio.run(preview_voice(voice["ShortName"])), daemon=True).start()).pack(side="left", padx=5)
                     tk.Button(frame, text="Selecionar", command=lambda voice=v: self.select_voice(voice)).pack(side="left", padx=5)
             except Exception as e:
                 messagebox.showerror("Erro ao carregar vozes", str(e))
-
         threading.Thread(target=lambda: asyncio.run(load()), daemon=True).start()
 
     def select_voice(self, voice):
@@ -197,27 +199,18 @@ class TextToAudioGUI:
         if not self.text or not self.selected_voice:
             messagebox.showwarning("Erro", "Selecione arquivo e voz primeiro!")
             return
-
-        try:
-            speed = float(self.speed_var.get())
-        except Exception:
-            speed = 1.4
-
+        speed = float(self.speed_var.get())
         divide_chapters = self.chapter_var.get()
         out_name = os.path.splitext(os.path.basename(self.file_entry.get()))[0] + f"_output_{speed}x.mp3"
-
-        threading.Thread(
-            target=self.generate_audio_thread,
-            args=(self.text, self.selected_voice, out_name, speed, divide_chapters),
-            daemon=True
-        ).start()
+        threading.Thread(target=self.generate_audio_thread,
+                         args=(self.text, self.selected_voice, out_name, speed, divide_chapters),
+                         daemon=True).start()
 
     def generate_audio_thread(self, text, voice, output_path, speed, divide_chapters):
         self.progress['value'] = 0
         self.progress.update()
         self.audio_done = False
 
-        # Simula progresso
         def progress_sim():
             while not self.audio_done:
                 self.progress['value'] += 1
@@ -227,7 +220,6 @@ class TextToAudioGUI:
                 time.sleep(0.05)
             self.progress['value'] = 100
             self.progress.update()
-
         threading.Thread(target=progress_sim, daemon=True).start()
 
         try:
@@ -239,7 +231,6 @@ class TextToAudioGUI:
                 asyncio.run(generate_audio(full_text, voice, output_path, speed))
             else:
                 asyncio.run(generate_audio(text, voice, output_path, speed))
-
             self.audio_done = True
             messagebox.showinfo("Pronto!", f"Áudio gerado: {output_path}")
         except Exception as e:
