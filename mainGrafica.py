@@ -37,9 +37,7 @@ async def list_voices():
     return ptb_voices
 
 async def preview_voice(voice_name):
-    # Texto de prévia normal
     preview_text = "Olá, esta é uma prévia da voz."
-    # Texto maior para vozes problemáticas
     if voice_name in ["pt-BR-Marcerio:DragonHDLatestNeural", "pt-BR-Thalita:DragonHDLatestNeural"]:
         preview_text = (
             "Olá! Esta é uma prévia da voz selecionada. "
@@ -50,12 +48,10 @@ async def preview_voice(voice_name):
         communicate = edge_tts.Communicate(preview_text, voice_name)
         await communicate.save(tmp_mp3)
 
-        # Inicializa pygame e toca o áudio
         pygame.mixer.init()
         pygame.mixer.music.load(tmp_mp3)
         pygame.mixer.music.play()
 
-        # Espera o áudio terminar sem travar o GUI
         while pygame.mixer.music.get_busy():
             await asyncio.sleep(0.1)
 
@@ -93,7 +89,8 @@ class TextToAudioGUI:
     def __init__(self, root):
         self.root = root
         self.root.title("Transformar Texto em Áudio")
-        self.root.geometry("700x600")
+        self.root.geometry("720x620")
+        self.root.minsize(600, 480)
         self.root.resizable(True, True)
         self.selected_voice = None
         self.text = None
@@ -109,7 +106,7 @@ class TextToAudioGUI:
 
         # Vozes
         tk.Label(root, text="Vozes disponíveis:").pack(anchor="w", padx=10, pady=(10,0))
-        self.voice_frame = tk.Frame(root)
+        self.voice_frame = tk.Frame(root, relief="groove", bd=1)
         self.voice_frame.pack(fill="both", expand=True, padx=10, pady=(0,10))
         self.voice_canvas = tk.Canvas(self.voice_frame)
         self.voice_scroll = ttk.Scrollbar(self.voice_frame, orient="vertical", command=self.voice_canvas.yview)
@@ -123,10 +120,11 @@ class TextToAudioGUI:
         self.voice_canvas.pack(side="left", fill="both", expand=True)
         self.voice_scroll.pack(side="right", fill="y")
 
-        # Scroll do mouse
+        # Scroll do mouse mais suave
         def _on_mousewheel(event):
             self.voice_canvas.yview_scroll(int(-1*(event.delta/120)), "units")
-        self.voice_canvas.bind_all("<MouseWheel>", _on_mousewheel)
+        self.voice_canvas.bind("<Enter>", lambda e: self.voice_canvas.bind_all("<MouseWheel>", _on_mousewheel))
+        self.voice_canvas.bind("<Leave>", lambda e: self.voice_canvas.unbind_all("<MouseWheel>"))
 
         # Velocidade
         tk.Label(root, text="Velocidade:").pack(anchor="w", padx=10)
@@ -135,7 +133,7 @@ class TextToAudioGUI:
             root,
             textvariable=self.speed_var,
             values=[str(round(x*0.1,1)) for x in range(10,21)],
-            state="readonly"  # Apenas seleção
+            state="readonly"
         )
         self.speed_dropdown.pack(fill="x", padx=10)
 
@@ -148,7 +146,7 @@ class TextToAudioGUI:
         self.generate_btn.pack(pady=5)
 
         # Barra de progresso
-        self.progress = ttk.Progressbar(root, orient="horizontal", length=600, mode="determinate")
+        self.progress = ttk.Progressbar(root, orient="horizontal", length=640, mode="determinate")
         self.progress.pack(pady=10, padx=10)
 
         # Inicializar vozes
@@ -162,20 +160,33 @@ class TextToAudioGUI:
         if filepath:
             self.file_entry.delete(0, tk.END)
             self.file_entry.insert(0, filepath)
-            self.text = extract_text(filepath)
+            try:
+                self.text = extract_text(filepath)
+            except Exception as e:
+                messagebox.showerror("Erro ao ler arquivo", str(e))
+                self.text = None
 
     def load_voices(self):
         async def load():
-            self.voices = await list_voices()
-            for v in self.voices:
-                frame = tk.Frame(self.voice_inner)
-                frame.pack(fill="x", pady=2)
-                tk.Label(frame, text=f"{v['ShortName']} ({v['VoiceType']})").pack(side="left", padx=5)
-                tk.Button(
-                    frame, text="▶️",
-                    command=lambda voice=v: threading.Thread(target=lambda: asyncio.run(preview_voice(voice["ShortName"])), daemon=True).start()
-                ).pack(side="left", padx=5)
-                tk.Button(frame, text="Selecionar", command=lambda voice=v: self.select_voice(voice)).pack(side="left", padx=5)
+            try:
+                self.voices = await list_voices()
+                for widget in self.voice_inner.winfo_children():
+                    widget.destroy()
+                for v in self.voices:
+                    frame = tk.Frame(self.voice_inner)
+                    frame.pack(fill="x", pady=2, padx=2)
+                    lbl = tk.Label(frame, text=f"{v.get('ShortName','')} ({v.get('VoiceType','')})", anchor="w")
+                    lbl.pack(side="left", padx=5, fill="x", expand=True)
+                    tk.Button(
+                        frame, text="▶️",
+                        command=lambda voice=v: threading.Thread(
+                            target=lambda: asyncio.run(preview_voice(voice["ShortName"])), daemon=True
+                        ).start()
+                    ).pack(side="left", padx=5)
+                    tk.Button(frame, text="Selecionar", command=lambda voice=v: self.select_voice(voice)).pack(side="left", padx=5)
+            except Exception as e:
+                messagebox.showerror("Erro ao carregar vozes", str(e))
+
         threading.Thread(target=lambda: asyncio.run(load()), daemon=True).start()
 
     def select_voice(self, voice):
@@ -187,7 +198,11 @@ class TextToAudioGUI:
             messagebox.showwarning("Erro", "Selecione arquivo e voz primeiro!")
             return
 
-        speed = float(self.speed_var.get())
+        try:
+            speed = float(self.speed_var.get())
+        except Exception:
+            speed = 1.4
+
         divide_chapters = self.chapter_var.get()
         out_name = os.path.splitext(os.path.basename(self.file_entry.get()))[0] + f"_output_{speed}x.mp3"
 
@@ -215,18 +230,21 @@ class TextToAudioGUI:
 
         threading.Thread(target=progress_sim, daemon=True).start()
 
-        # Geração real
-        if divide_chapters:
-            chapters = split_by_chapters(text)
-            full_text = ""
-            for title, content in chapters:
-                full_text += content + "\n"
-            asyncio.run(generate_audio(full_text, voice, output_path, speed))
-        else:
-            asyncio.run(generate_audio(text, voice, output_path, speed))
+        try:
+            if divide_chapters:
+                chapters = split_by_chapters(text)
+                full_text = ""
+                for _, content in chapters:
+                    full_text += content + "\n"
+                asyncio.run(generate_audio(full_text, voice, output_path, speed))
+            else:
+                asyncio.run(generate_audio(text, voice, output_path, speed))
 
-        self.audio_done = True
-        messagebox.showinfo("Pronto!", f"Áudio gerado: {output_path}")
+            self.audio_done = True
+            messagebox.showinfo("Pronto!", f"Áudio gerado: {output_path}")
+        except Exception as e:
+            self.audio_done = True
+            messagebox.showerror("Erro ao gerar áudio", str(e))
 
 # === Rodar GUI ===
 if __name__ == "__main__":
