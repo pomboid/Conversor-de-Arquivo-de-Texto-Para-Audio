@@ -7,6 +7,7 @@ Este projeto converte arquivos de texto (📄 **PDF**, 📝 **TXT** e 📘 **DOC
 2. **Versão com Interface Gráfica (GUI)** – utilizando **Tkinter** (`mainGrafica.py`).
 
 3. OBS: A barra de progresso pode ficar travada no fim, porém é só esperar, quanto maior o arquivo mais tempo leva para converter
+4. OBS 2: Indico usar a versão gráfica, esta mais atualizada e mais flúida
 
 ---
 
