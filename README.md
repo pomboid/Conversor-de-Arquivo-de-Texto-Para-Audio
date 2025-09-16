@@ -282,7 +282,7 @@ Este projeto é de código aberto e está disponível sob a licença MIT.
 
 ## 🔄 Histórico de Versões
 
-### v3.0 (Atual) - ULTRA-OTIMIZADA
+### v3.0 (Atual)
 - ✅ **ThreadPoolExecutor** com processamento multi-thread
 - ✅ **Cache inteligente** com Hash MD5 e auto-limpeza
 - ✅ **Pool de conexões** Edge TTS (5 conexões simultâneas)
